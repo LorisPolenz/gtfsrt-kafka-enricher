@@ -6,7 +6,7 @@ COPY main.go .
 COPY go.mod .
 COPY go.sum .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o gtfs-kafka-enrichment .
+RUN go build -o gtfs-kafka-enrichment .
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /app

@@ -6,11 +6,11 @@ COPY main.go .
 COPY go.mod .
 COPY go.sum .
 
-RUN go build -o gtfs-kafka-enrichment .
+RUN go build -o gtfsrt-kafka-enricher .
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /app
-COPY --from=builder /app/gtfs-kafka-enrichment .
+COPY --from=builder /app/gtfsrt-kafka-enricher .
 
-ENTRYPOINT ["/app/gtfs-kafka-enrichment"]
+ENTRYPOINT ["/app/gtfsrt-kafka-enricher"]
 

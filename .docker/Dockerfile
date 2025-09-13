@@ -2,7 +2,7 @@ FROM golang:1.25.1 AS builder
 
 WORKDIR /app
 COPY main.go .
-#COPY types.go .
+COPY types.go .
 COPY go.mod .
 COPY go.sum .
 

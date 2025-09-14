@@ -27,9 +27,17 @@ var stops = make(map[string]struct {
 })
 
 func getConsumer() *kafka.Consumer {
-	c, err := kafka.NewConsumer(&kafka.ConfigMap{
-		"bootstrap.servers": "172.18.0.71:9092",
-		"group.id":          "kafka-go-getting-started",
+	var bootstrapServers string
+	bootstrapServers = os.Getenv("KAFKA_BOOTSTRAP_SERVERS")
+
+	if bootstrapServers == "" {
+		fmt.Println("KAFKA_BOOTSTRAP_SERVERS environment variable is not set.")
+		os.Exit(1)
+	}
+
+	kc, err := kafka.NewConsumer(&kafka.ConfigMap{
+		"bootstrap.servers": bootstrapServers,
+		"group.id":          "gtfsrt-kafka-enricher",
 	})
 
 	if err != nil {
@@ -37,12 +45,20 @@ func getConsumer() *kafka.Consumer {
 		os.Exit(1)
 	}
 
-	return c
+	return kc
 }
 
 func getProducer() *kafka.Producer {
-	p, err := kafka.NewProducer(&kafka.ConfigMap{
-		"bootstrap.servers": "172.18.0.71:9092",
+	var bootstrapServers string
+	bootstrapServers = os.Getenv("KAFKA_BOOTSTRAP_SERVERS")
+
+	if bootstrapServers == "" {
+		fmt.Println("KAFKA_BOOTSTRAP_SERVERS environment variable is not set.")
+		os.Exit(1)
+	}
+
+	kp, err := kafka.NewProducer(&kafka.ConfigMap{
+		"bootstrap.servers": bootstrapServers,
 	})
 
 	if err != nil {
@@ -50,18 +66,26 @@ func getProducer() *kafka.Producer {
 		os.Exit(1)
 	}
 
-	return p
+	return kp
 }
 
 func getRedisClient() *redis.Client {
+	var redisAddr string
+	redisAddr = os.Getenv("REDIS_ADDR")
+
+	if redisAddr == "" {
+		fmt.Println("REDIS_ADDR environment variable is not set. Using default localhost:6379")
+		redisAddr = "localhost:6379"
+	}
+
 	rdb := redis.NewClient(&redis.Options{
-		Addr: "127.0.0.1:6379",
+		Addr: redisAddr,
 	})
 	return rdb
 }
 
 func resolveStopName(stopID string) (string, error) {
-	// Check if we already have the stop name cached
+	// Check if the stop name is already cached and still valid
 	if stopObject, found := stops[stopID]; found {
 		if stopObject.validUntil.After(time.Now()) {
 			return stopObject.DataString, nil
@@ -74,6 +98,7 @@ func resolveStopName(stopID string) (string, error) {
 		// fmt.Printf("Failed to get stop name from Redis: %s", stopID)
 		// os.Exit(1)
 		// return "", fmt.Errorf("Failed to get stop name from Redis: %s", err)
+		//TODO : Technically we should return an error here, but for now we just return a dummy stop because of invalid GTFS data
 		return "{\"stop_name\": \"Undefined\", \"location\": {\"lat\": 0, \"lon\": 0}, \"parent_station\": \"Undefined\" }", nil // Fallback to stop ID if not found in Redis
 	}
 
@@ -154,28 +179,46 @@ func processDate(dateStr string, timeStr string) (string, error) {
 }
 
 func main() {
-	topic := "kafka.process.gtfs"
+	var srcTopic string
+	srcTopic = os.Getenv("KAFKA_SOURCE_TOPIC")
+
+	if srcTopic == "" {
+		fmt.Println("KAFKA_SOURCE_TOPIC environment variable is not set.")
+		os.Exit(1)
+	}
+
+	var dstTopic string
+	dstTopic = os.Getenv("KAFKA_DESTINATION_TOPIC")
+
+	if dstTopic == "" {
+		fmt.Println("KAFKA_DESTINATION_TOPIC environment variable is not set.")
+		os.Exit(1)
+	}
+
+
 	dstTopic := "logstash.index.gtfs-delays"
 
 	defer func() {
 		if err := kc.Close(); err != nil {
-			fmt.Printf("Eerror closing Kafka consumer: %v\n", err)
+			fmt.Printf("error closing Kafka consumer: %v\n", err)
 			os.Exit(1)
 		}
 	}()
 
-	err := kc.SubscribeTopics([]string{topic}, nil)
+	defer kp.Close()
+
+	err := kc.SubscribeTopics([]string{srcTopic}, nil)
 
 	// Set up a channel for handling Ctrl-C, etc
 	signalChain := make(chan os.Signal, 1)
 	signal.Notify(signalChain, syscall.SIGINT, syscall.SIGTERM)
 
 	if err != nil {
-		fmt.Printf("Failed to subscribe to topic %s: %s", topic, err)
+		fmt.Printf("Failed to subscribe to topic %s: %s", srcTopic, err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Subscribed to topic %s\n", topic)
+	fmt.Printf("Subscribed to topic %s\n", srcTopic)
 
 	// Process messages
 	run := true
@@ -190,9 +233,6 @@ func main() {
 				// Errors are informational and automatically handled by the consumer
 				continue
 			}
-			// fmt.Printf("Consumed event from topic %s: key = %-10s value = %s\n",
-			// *ev.TopicPartition.Topic, string(ev.Key), string(ev.Value))
-
 			record, err := deserializeMessage(ev.Value)
 			if err != nil {
 				fmt.Printf("Failed to deserialize message: %s\n", err)
@@ -249,6 +289,4 @@ func main() {
 			}
 		}
 	}
-
-	kp.Close()
 }
